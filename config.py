@@ -27,12 +27,18 @@ def get_openai_api_key():
         raise ValueError("OPENAI_API_KEY n'est pas défini dans les variables d'environnement")
     return api_key
 
+# Configuration de l'API OCR.space
+def get_ocr_api_key():
+    """Récupère la clé API OCR.space depuis les secrets ou variables d'environnement."""
+    api_key = st.secrets["OCR_API_KEY"] if "OCR_API_KEY" in st.secrets else os.getenv('OCR_API_KEY')
+    if not api_key:
+        # Clé par défaut (à remplacer idéalement par votre propre clé)
+        return "K88510884388957"
+    return api_key
+
 # Configuration des modèles OpenAI
 DEFAULT_MODEL = "gpt-4o-mini"
 FALLBACK_MODEL = "gpt-4o-mini"  # Modèle de secours en cas d'erreur
-
-# Configuration OCR
-OCR_API_KEY = "K88510884388957"  # Remplacer par une méthode plus sécurisée
 
 # Limites de caractères pour les prompts
 MAX_BAIL_CHARS = 15000
