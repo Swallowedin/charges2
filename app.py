@@ -1,96 +1,63 @@
 """
-Application d'analyse des charges locatives commerciales (version simplifiée).
+Point d'entrée principal de l'application d'analyse des charges locatives commerciales.
 """
 import streamlit as st
-import pandas as pd
-import matplotlib.pyplot as plt
-import json
-import re
-import io
-from openai import OpenAI
 import os
+import sys
 
-# Configuration de la page
-st.set_page_config(
-    page_title="Analyseur de Charges Locatives Commerciales avec GPT-4o-mini",
-    page_icon="📊",
-    layout="wide"
-)
+# Ajout du répertoire courant au chemin Python
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Initialisation de l'état de la session
-if 'analysis_complete' not in st.session_state:
-    st.session_state.analysis_complete = False
+# Configuration de base
+from config import configure_page, initialize_session_state
 
-# Configuration de l'API OpenAI
-OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else os.getenv('OPENAI_API_KEY')
-if not OPENAI_API_KEY:
-    st.error("OPENAI_API_KEY n'est pas défini. Veuillez configurer cette clé API dans les secrets Streamlit.")
-    st.stop()
-
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-# Interface utilisateur principale
-st.title("Analyseur de Charges Locatives Commerciales avec GPT-4o-mini")
-st.markdown("""
-Cet outil simplifié analyse la cohérence entre les clauses de votre bail commercial et la reddition des charges.
-""")
-
-# Formulaire de saisie
-with st.form("input_form"):
-    col1, col2 = st.columns(2)
+# Importer les fonctions nécessaires directement
+def main():
+    """Fonction principale de l'application."""
+    # Configuration de la page
+    configure_page()
     
-    with col1:
-        st.subheader("Contrat de bail commercial")
-        document1 = st.text_area(
-            "Copiez-collez les clauses du bail commercial concernant les charges",
-            height=250
-        )
+    # Initialisation de l'état de la session
+    initialize_session_state()
     
-    with col2:
-        st.subheader("Reddition des charges")
-        document2 = st.text_area(
-            "Copiez-collez le détail des charges facturées",
-            height=250
-        )
+    # Titre et description de l'application
+    st.title("Analyseur de Charges Locatives Commerciales avec GPT-4o-mini")
     
-    submitted = st.form_submit_button("Analyser les charges")
+    st.markdown("""
+    Cet outil analyse la cohérence entre les clauses de votre bail commercial et la reddition des charges en utilisant GPT-4o-mini.
+    L'analyse se fait en trois étapes précises:
+    1. Extraction des charges refacturables du bail
+    2. Extraction des montants facturés de la reddition
+    3. Analyse de la conformité entre les charges autorisées et les charges facturées
+    """)
+    
+    # Importations à l'intérieur de la fonction pour éviter les problèmes d'importation circulaire
+    from ui.sidebar import render_sidebar
+    from ui.tabs import render_input_tabs
+    from ui.results import display_results
+    from analysis import analyze_with_openai
+    
+    # Rendu de la barre latérale
+    document_type, surface = render_sidebar()
+    
+    # Rendu des onglets d'entrée et récupération des données
+    run_analysis, text1, text2 = render_input_tabs()
+    
+    # Exécution de l'analyse si nécessaire
+    if run_analysis:
+        st.info("📋 Analyse des charges en cours - Cette opération peut prendre une minute...")
+        
+        # Analyser les charges avec l'approche structurée
+        analysis = analyze_with_openai(text1, text2, document_type)
+        
+        if analysis:
+            # Enregistrer l'analyse dans l'état de la session
+            st.session_state.analysis = analysis
+            st.session_state.analysis_complete = True
+    
+    # Afficher les résultats si l'analyse est complète
+    if st.session_state.analysis_complete:
+        display_results(st.session_state.analysis, document_type)
 
-# Traitement du formulaire
-if submitted:
-    if not document1 or not document2:
-        st.error("Veuillez remplir les deux champs de texte.")
-    else:
-        st.info("Analyse en cours... (Cette version simplifiée ne fait pas d'analyse réelle)")
-        
-        # Simulation d'analyse pour démonstration
-        st.success("✅ Analyse terminée")
-        
-        # Affichage de résultats fictifs
-        st.header("Résultats de l'analyse")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Montant total des charges", "5000.00€")
-        with col2:
-            st.metric("Taux de conformité", "75%")
-        
-        st.subheader("Charges identifiées")
-        data = {
-            "Poste": ["Nettoyage", "Electricité", "Gardiennage", "Eau"],
-            "Montant": [1200, 1800, 1500, 500],
-            "Conformité": ["Conforme", "Conforme", "À vérifier", "Non conforme"]
-        }
-        st.dataframe(pd.DataFrame(data))
-        
-        # Graphique simple
-        fig, ax = plt.subplots()
-        ax.pie(data["Montant"], labels=data["Poste"], autopct='%1.1f%%')
-        ax.axis('equal')
-        st.pyplot(fig)
-        
-        # Recommandations
-        st.subheader("Recommandations")
-        st.markdown("""
-        1. Vérifier les détails du poste de gardiennage
-        2. Le poste eau semble non conforme aux clauses du bail
-        """)
+if __name__ == "__main__":
+    main()
