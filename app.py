@@ -5,21 +5,13 @@ import streamlit as st
 import os
 import sys
 
-# Ajouter le répertoire du projet au chemin Python
-root_dir = os.path.dirname(os.path.abspath(__file__))
-if root_dir not in sys.path:
-    sys.path.insert(0, root_dir)
+# Ajouter le répertoire courant au chemin Python (au cas où __main__.py n'est pas utilisé)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
 
 # Configuration de base
 from config import configure_page, initialize_session_state
-
-# Importation des modules d'interface utilisateur
-from ui.sidebar import render_sidebar
-from ui.tabs import render_input_tabs
-from ui.results import display_results
-
-# Importation du module d'analyse
-from analysis import analyze_with_openai
 
 def main():
     """Fonction principale de l'application."""
@@ -39,6 +31,12 @@ def main():
     2. Extraction des montants facturés de la reddition
     3. Analyse de la conformité entre les charges autorisées et les charges facturées
     """)
+    
+    # Importations au sein de la fonction pour éviter les problèmes d'importation circulaire
+    from ui.sidebar import render_sidebar
+    from ui.tabs import render_input_tabs
+    from ui.results import display_results
+    from analysis import analyze_with_openai
     
     # Rendu de la barre latérale
     document_type, surface = render_sidebar()
