@@ -9,9 +9,26 @@ from config import get_openai_api_key, DEFAULT_MODEL, FALLBACK_MODEL
 def get_openai_client():
     """Initialise et retourne un client OpenAI."""
     try:
-        # Retirer le paramètre proxies qui cause l'erreur
+        # Essayer d'abord sans proxies
         client = OpenAI(api_key=get_openai_api_key())
         return client
+    except TypeError as e:
+        # Si l'erreur concerne 'proxies', ignorer ce paramètre
+        if "proxies" in str(e):
+            st.warning("Ignoré l'erreur de paramètre 'proxies'")
+            # Tenter une autre approche d'initialisation
+            try:
+                # Méthode alternative d'initialisation sans paramètres optionnels
+                from openai import OpenAI
+                client = OpenAI(api_key=get_openai_api_key())
+                return client
+            except Exception as inner_e:
+                st.error(f"Erreur lors de la seconde tentative d'initialisation: {str(inner_e)}")
+                raise
+        else:
+            # Autre type d'erreur
+            st.error(f"Erreur lors de l'initialisation du client OpenAI: {str(e)}")
+            raise
     except Exception as e:
         st.error(f"Erreur lors de l'initialisation du client OpenAI: {str(e)}")
         raise
