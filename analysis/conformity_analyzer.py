@@ -3,7 +3,7 @@ Module d'analyse de la conformité entre les charges refacturables et les montan
 """
 import streamlit as st
 import json
-from api.openai_client import send_openai_request, parse_json_response
+from api.openai_client import get_openai_client, send_openai_request, parse_json_response
 from config import DEFAULT_CONFORMITY_LEVEL
 
 def analyse_charges_conformity(refacturable_charges, charged_amounts, client):
