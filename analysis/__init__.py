@@ -23,6 +23,9 @@ def analyze_with_openai(text1, text2, document_type):
     Returns:
         Dictionnaire contenant l'analyse complète
     """
+    # Initialiser client en dehors du bloc try
+    client = None
+    
     try:
         # Initialiser le client OpenAI
         client = get_openai_client()
@@ -66,5 +69,22 @@ def analyze_with_openai(text1, text2, document_type):
     
     except Exception as e:
         st.error(f"Erreur lors de l'analyse: {str(e)}")
-        # Nouvelle tentative avec un prompt composé
-        return final_attempt_complete_analysis(text1, text2, client)
+        
+        # Vérifier si client a été initialisé avant de l'utiliser
+        if client:
+            return final_attempt_complete_analysis(text1, text2, client)
+        else:
+            # Si client n'a pas été initialisé, créer un résultat vide
+            return {
+                "charges_refacturables": [],
+                "charges_facturees": [],
+                "montant_total": 0,
+                "analyse_globale": {
+                    "taux_conformite": 0,
+                    "conformite_detail": "L'analyse a échoué: impossible de se connecter à l'API OpenAI."
+                },
+                "recommandations": [
+                    "Vérifiez votre clé API OpenAI et votre connexion internet.",
+                    "Essayez à nouveau plus tard."
+                ]
+            }
