@@ -33,7 +33,7 @@ def main():
     """)
     
     # Importer les modules avec importlib (méthode plus robuste pour Streamlit Cloud)
-    sidebar_path = os.path.join(current_dir, "ui", "sidebar.py")
+    sidebar_path = os.path.join(current_dir, "ui", "tabs.py")
     spec = importlib.util.spec_from_file_location("sidebar", sidebar_path)
     sidebar = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sidebar)
