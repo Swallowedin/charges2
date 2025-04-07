@@ -11,7 +11,7 @@ import tempfile
 import requests
 import os
 from pdf2image import convert_from_path
-from config import OCR_API_KEY
+from config import get_ocr_api_key  # Modifier cette ligne pour utiliser la fonction
 
 def extract_text_from_image(uploaded_file):
     """
@@ -48,6 +48,9 @@ def ocr_from_pdf_using_api(uploaded_file):
         Le texte extrait du PDF via OCR
     """
     try:
+        # Obtenir la clé API OCR en utilisant la fonction
+        OCR_API_KEY = get_ocr_api_key()
+        
         # Sauvegarder le fichier uploadé sur le système de fichiers temporaire
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
             tmp.write(uploaded_file.getbuffer())
