@@ -1,7 +1,8 @@
 """
-Module pour la gestion de la barre latérale (sidebar) de l'application Streamlit.
+Module pour la gestion des onglets et de la barre latérale de l'application Streamlit.
 """
 import streamlit as st
+from utils.file_utils import process_multiple_files, validate_file_input
 
 def render_sidebar():
     """
@@ -60,3 +61,97 @@ def render_sidebar():
         """)
     
     return document_type, surface
+
+
+def render_input_tabs():
+    """
+    Affiche les onglets d'entrée pour télécharger les documents et récupère leur contenu.
+    
+    Returns:
+        Tuple contenant (run_analysis, text1, text2)
+    """
+    st.header("Téléchargement des documents")
+    
+    # Création des onglets
+    doc1_tab, doc2_tab, analyse_tab = st.tabs([
+        "Bail commercial", 
+        "Reddition des charges", 
+        "Lancer l'analyse"
+    ])
+    
+    # Variables pour stocker les résultats
+    doc1_files = None
+    doc2_files = None
+    document1_text = ""
+    document2_text = ""
+    run_analysis = False
+    
+    # Onglet 1: Bail commercial
+    with doc1_tab:
+        st.subheader("Téléchargez votre bail commercial")
+        st.info("Formats acceptés: PDF, Word, TXT ou image")
+        
+        doc1_files = st.file_uploader(
+            "Sélectionnez un ou plusieurs fichiers contenant le bail commercial",
+            type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
+            accept_multiple_files=True,
+            key="bail_files"
+        )
+        
+        if doc1_files:
+            document1_text = process_multiple_files(doc1_files)
+            st.session_state.document1_text = document1_text
+            
+            if document1_text:
+                st.success(f"✅ {len(doc1_files)} fichier(s) traité(s) - {len(document1_text)} caractères extraits")
+                with st.expander("Aperçu du texte extrait"):
+                    st.text(document1_text[:1000] + "..." if len(document1_text) > 1000 else document1_text)
+            else:
+                st.error("❌ Aucun texte n'a pu être extrait. Vérifiez vos fichiers.")
+    
+    # Onglet 2: Reddition des charges
+    with doc2_tab:
+        st.subheader("Téléchargez votre reddition des charges")
+        st.info("Formats acceptés: PDF, Word, TXT ou image")
+        
+        doc2_files = st.file_uploader(
+            "Sélectionnez un ou plusieurs fichiers contenant la reddition des charges",
+            type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
+            accept_multiple_files=True,
+            key="charges_files"
+        )
+        
+        if doc2_files:
+            document2_text = process_multiple_files(doc2_files)
+            st.session_state.document2_text = document2_text
+            
+            if document2_text:
+                st.success(f"✅ {len(doc2_files)} fichier(s) traité(s) - {len(document2_text)} caractères extraits")
+                with st.expander("Aperçu du texte extrait"):
+                    st.text(document2_text[:1000] + "..." if len(document2_text) > 1000 else document2_text)
+            else:
+                st.error("❌ Aucun texte n'a pu être extrait. Vérifiez vos fichiers.")
+    
+    # Onglet 3: Lancer l'analyse
+    with analyse_tab:
+        st.subheader("Lancer l'analyse des documents")
+        
+        # Récupérer les données de la session si disponibles
+        if "document1_text" in st.session_state:
+            document1_text = st.session_state.document1_text
+        if "document2_text" in st.session_state:
+            document2_text = st.session_state.document2_text
+        
+        # Vérifier si les documents sont prêts pour l'analyse
+        is_valid, error_message = validate_file_input(doc1_files, doc2_files)
+        
+        if is_valid:
+            st.success("✅ Documents prêts pour l'analyse")
+            
+            if st.button("Lancer l'analyse des charges"):
+                run_analysis = True
+        else:
+            st.warning(error_message)
+    
+    # Retourner les résultats attendus par app.py
+    return run_analysis, document1_text, document2_text
