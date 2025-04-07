@@ -9,6 +9,7 @@ from config import get_openai_api_key, DEFAULT_MODEL, FALLBACK_MODEL
 def get_openai_client():
     """Initialise et retourne un client OpenAI."""
     try:
+        # Retirer le paramètre proxies qui cause l'erreur
         client = OpenAI(api_key=get_openai_api_key())
         return client
     except Exception as e:
