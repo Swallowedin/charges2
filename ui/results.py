@@ -102,10 +102,29 @@ def display_charges_chart(charges_facturees):
     Args:
         charges_facturees: Liste des charges facturées
     """
+    # Vérifier si la liste est vide
+    if not charges_facturees:
+        st.warning("Aucune charge à afficher dans le graphique.")
+        return
+        
     # Préparation du graphique camembert
     fig, ax = plt.subplots(figsize=(10, 6))
-    labels = [charge["poste"] for charge in charges_facturees]
-    sizes = [charge["montant"] for charge in charges_facturees]
+    
+    # S'assurer que toutes les valeurs sont positives
+    labels = []
+    sizes = []
+    
+    for charge in charges_facturees:
+        # Ne prendre que les montants positifs pour le graphique
+        montant = charge.get("montant", 0)
+        if montant > 0:  # Ne prendre que les valeurs positives
+            labels.append(charge.get("poste", ""))
+            sizes.append(montant)
+    
+    # Vérifier s'il reste des valeurs à afficher
+    if not sizes:
+        st.warning("Aucune charge avec un montant positif à afficher.")
+        return
     
     # Génération du graphique
     wedges, texts, autotexts = ax.pie(
