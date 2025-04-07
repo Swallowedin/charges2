@@ -331,7 +331,7 @@ def simplify_and_retry_conformity(refacturable_charges, charged_amounts, client)
             "recommandations": ["Consulter un expert pour une analyse complète des charges."]
         }
 
-def final_attempt_complete_analysis(text1, text2, client):
+def final_attempt_complete_analysis(text1, text2, client=None):
     """
     Tentative finale d'analyse complète avec un seul appel IA intégré.
     Cette fonction est appelée en dernier recours si les autres approches échouent.
@@ -339,13 +339,34 @@ def final_attempt_complete_analysis(text1, text2, client):
     Args:
         text1: Texte du bail commercial
         text2: Texte de la reddition des charges
-        client: Client OpenAI
+        client: Client OpenAI (peut être None)
         
     Returns:
         Dictionnaire contenant l'analyse complète
     """
     try:
         st.warning("Tentative d'analyse unifiée en cours...")
+        
+        # Si le client n'a pas été initialisé, essayer de le créer
+        if client is None:
+            try:
+                client = get_openai_client()
+            except Exception as e:
+                st.error(f"Impossible d'initialiser le client OpenAI: {str(e)}")
+                # Retourner une structure vide
+                return {
+                    "charges_refacturables": [],
+                    "charges_facturees": [],
+                    "montant_total": 0,
+                    "analyse_globale": {
+                        "taux_conformite": 0,
+                        "conformite_detail": "L'analyse a échoué: impossible de se connecter à l'API OpenAI."
+                    },
+                    "recommandations": [
+                        "Vérifiez votre clé API OpenAI et votre connexion internet.",
+                        "Essayez à nouveau plus tard."
+                    ]
+                }
         
         # Utiliser un seul prompt qui fait tout en une fois
         prompt = f"""
