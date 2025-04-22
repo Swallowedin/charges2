@@ -348,4 +348,17 @@ def extract_charged_amounts_fallback(charges_text, client):
         charges = []
         for charge in result["charges"]:
             if "poste" in charge and "montant" in charge:
-                try
+                try:
+                    # S'assurer que le montant est un nombre
+                    charge["montant"] = float(charge["montant"])
+                    charges.append({"poste": charge["poste"], "montant": charge["montant"]})
+                except (ValueError, TypeError):
+                    continue
+                    
+        if charges:
+            st.info(f"Extraction de secours réussie - {len(charges)} postes de charges identifiés")
+            return charges
+            
+    # Si nous arrivons ici, aucune méthode n'a fonctionné
+    st.error("⚠️ Aucune charge n'a pu être extraite avec les méthodes disponibles")
+    return []
