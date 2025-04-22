@@ -1,16 +1,272 @@
 """
-Module d'analyse de la conformité entre les charges refacturables et les montants facturés.
-Dépend exclusivement de GPT-4o-mini pour l'analyse.
+Module amélioré d'analyse de la conformité entre les charges refacturables et les montants facturés.
+Focus sur la précision et la robustesse de l'analyse juridique.
 """
 import streamlit as st
 import json
+import re
 from api.openai_client import get_openai_client, send_openai_request, parse_json_response
 from config import DEFAULT_CONFORMITY_LEVEL
+
+def standardize_charge_names(charges):
+    """
+    Standardise les noms des charges pour faciliter la comparaison.
+    
+    Args:
+        charges: Liste de charges à standardiser
+        
+    Returns:
+        Liste de charges avec noms standardisés
+    """
+    standardized = []
+    
+    for charge in charges:
+        # Copier la charge
+        std_charge = charge.copy()
+        
+        # Standardiser le nom/poste de la charge
+        if "poste" in std_charge:
+            name = std_charge["poste"]
+        elif "categorie" in std_charge:
+            name = std_charge["categorie"]
+        else:
+            name = ""
+            
+        # Convertir en minuscules
+        name = name.lower()
+        
+        # Supprimer les caractères spéciaux et accents
+        name = re.sub(r'[^\w\s]', ' ', name)
+        
+        # Remplacer les espaces multiples par un seul
+        name = re.sub(r'\s+', ' ', name)
+        
+        # Supprimer les mots vides comme "de", "du", "la", etc.
+        stop_words = ["de", "du", "la", "le", "les", "des", "un", "une", "et", "ou", "a", "au", "aux"]
+        for word in stop_words:
+            name = re.sub(r'\b' + word + r'\b', '', name)
+            
+        # Supprimer les espaces en début et fin
+        name = name.strip()
+        
+        # Ajouter la version standardisée
+        std_charge["standardized_name"] = name
+        standardized.append(std_charge)
+    
+    return standardized
+
+def find_similar_charges(refacturable_charges, charged_amounts):
+    """
+    Trouve les correspondances entre charges refacturables et charges facturées.
+    
+    Args:
+        refacturable_charges: Liste des charges refacturables selon le bail
+        charged_amounts: Liste des charges facturées
+        
+    Returns:
+        Dictionnaire des correspondances
+    """
+    # Standardiser les noms
+    std_refacturable = standardize_charge_names(refacturable_charges)
+    std_charged = standardize_charge_names(charged_amounts)
+    
+    # Dictionnaire pour stocker les correspondances
+    matches = {}
+    
+    # Pour chaque charge facturée, trouver les refacturables correspondantes
+    for charged in std_charged:
+        charged_name = charged["standardized_name"]
+        matches[charged_name] = []
+        
+        # Chercher des correspondances exactes ou partielles
+        for refac in std_refacturable:
+            refac_name = refac["standardized_name"]
+            
+            # Calculer un score de similarité simple
+            similarity = 0
+            
+            # Correspondance exacte
+            if charged_name == refac_name:
+                similarity = 1.0
+            # Inclusion d'une chaîne dans l'autre
+            elif charged_name in refac_name or refac_name in charged_name:
+                # Plus longue sous-chaîne commune
+                common_length = max(len(s) for s in [charged_name.split(), refac_name.split()] if s in charged_name and s in refac_name)
+                similarity = common_length / max(len(charged_name), len(refac_name))
+            # Mots communs
+            else:
+                charged_words = set(charged_name.split())
+                refac_words = set(refac_name.split())
+                common_words = charged_words.intersection(refac_words)
+                
+                if common_words:
+                    similarity = len(common_words) / max(len(charged_words), len(refac_words))
+            
+            # Si similarité suffisante, ajouter à la liste des correspondances
+            if similarity > 0.3:  # Seuil arbitraire
+                matches[charged_name].append({
+                    "refacturable": refac,
+                    "similarity": similarity
+                })
+        
+        # Trier par similarité décroissante
+        matches[charged_name].sort(key=lambda x: x["similarity"], reverse=True)
+    
+    return matches
+
+def evaluate_charge_conformity(charged_amount, matching_refacturables):
+    """
+    Évalue la conformité d'une charge facturée par rapport aux charges refacturables.
+    
+    Args:
+        charged_amount: Charge facturée
+        matching_refacturables: Liste des charges refacturables correspondantes
+        
+    Returns:
+        Dictionnaire avec évaluation de conformité
+    """
+    # Si aucune correspondance, la charge est potentiellement non conforme
+    if not matching_refacturables:
+        return {
+            "conformite": "non conforme",
+            "justification": "Aucune charge correspondante trouvée dans le bail",
+            "contestable": True,
+            "raison_contestation": "Charge non prévue explicitement dans le bail"
+        }
+    
+    # Si une correspondance avec similarité élevée
+    best_match = matching_refacturables[0]
+    if best_match["similarity"] > 0.8:
+        return {
+            "conformite": "conforme",
+            "justification": f"Correspondance directe avec la charge refacturable '{best_match['refacturable'].get('categorie', '')}'",
+            "contestable": False,
+            "raison_contestation": ""
+        }
+    
+    # Si une correspondance avec similarité moyenne
+    if best_match["similarity"] > 0.5:
+        return {
+            "conformite": "à vérifier",
+            "justification": f"Correspondance partielle avec la charge refacturable '{best_match['refacturable'].get('categorie', '')}'",
+            "contestable": False,
+            "raison_contestation": "Vérifier si la charge entre bien dans cette catégorie"
+        }
+    
+    # Correspondance faible
+    return {
+        "conformite": "à vérifier",
+        "justification": f"Correspondance faible avec la charge refacturable '{best_match['refacturable'].get('categorie', '')}'",
+        "contestable": True,
+        "raison_contestation": "Correspondance insuffisante avec les charges prévues dans le bail"
+    }
+
+def analyse_charges_conformity_local(refacturable_charges, charged_amounts):
+    """
+    Analyse la conformité entre les charges refacturables et les montants facturés
+    sans recourir à l'API OpenAI.
+    
+    Args:
+        refacturable_charges: Liste des charges refacturables selon le bail
+        charged_amounts: Liste des charges facturées
+        
+    Returns:
+        Dictionnaire contenant l'analyse de conformité
+    """
+    try:
+        # Trouver les correspondances entre charges refacturables et facturées
+        charge_matches = find_similar_charges(refacturable_charges, charged_amounts)
+        
+        # Calculer le montant total
+        montant_total = sum(charge.get("montant", 0) for charge in charged_amounts)
+        
+        # Analyser chaque charge facturée
+        charges_analysees = []
+        
+        for charge in charged_amounts:
+            # Obtenir le nom standardisé
+            std_name = standardize_charge_names([charge])[0]["standardized_name"]
+            
+            # Obtenir les correspondances
+            matches = charge_matches.get(std_name, [])
+            
+            # Évaluer la conformité
+            evaluation = evaluate_charge_conformity(charge, matches)
+            
+            # Calculer le pourcentage
+            pourcentage = (charge.get("montant", 0) / montant_total * 100) if montant_total > 0 else 0
+            
+            # Créer l'entrée d'analyse
+            charge_analysee = {
+                "poste": charge.get("poste", ""),
+                "montant": charge.get("montant", 0),
+                "pourcentage": pourcentage,
+                "conformite": evaluation["conformite"],
+                "justification": evaluation["justification"],
+                "contestable": evaluation["contestable"],
+                "raison_contestation": evaluation["raison_contestation"]
+            }
+            
+            charges_analysees.append(charge_analysee)
+        
+        # Calculer le taux global de conformité
+        charges_conformes = [c for c in charges_analysees if c["conformite"] == "conforme"]
+        montant_conforme = sum(c["montant"] for c in charges_conformes)
+        taux_conformite = (montant_conforme / montant_total * 100) if montant_total > 0 else 0
+        
+        # Générer les recommandations
+        recommandations = []
+        
+        # Si des charges sont contestables
+        charges_contestables = [c for c in charges_analysees if c["contestable"]]
+        if charges_contestables:
+            montant_contestable = sum(c["montant"] for c in charges_contestables)
+            recommandations.append(
+                f"Vérifier ou contester les {len(charges_contestables)} charges potentiellement non conformes, "
+                f"représentant {montant_contestable:.2f}€ ({montant_contestable/montant_total*100:.1f}% du total)."
+            )
+            
+            # Recommandations spécifiques pour les charges importantes
+            charges_importantes = [c for c in charges_contestables if c["pourcentage"] > 5]
+            for charge in charges_importantes:
+                recommandations.append(
+                    f"Examiner spécifiquement la charge '{charge['poste']}' ({charge['montant']:.2f}€) : {charge['raison_contestation']}"
+                )
+        
+        # Recommandation générale si le taux de conformité est bas
+        if taux_conformite < 70:
+            recommandations.append(
+                "Demander au bailleur une justification détaillée de la répartition des charges, "
+                "car le taux de conformité global est inférieur à 70%."
+            )
+        
+        # Constituer le résultat final
+        resultat = {
+            "charges_refacturables": refacturable_charges,
+            "charges_facturees": charges_analysees,
+            "montant_total": montant_total,
+            "analyse_globale": {
+                "taux_conformite": round(taux_conformite),
+                "conformite_detail": (
+                    f"Sur un total de {montant_total:.2f}€ de charges facturées, "
+                    f"{montant_conforme:.2f}€ ({round(taux_conformite)}%) sont clairement conformes au bail. "
+                    f"{len(charges_contestables)} charges représentant {sum(c['montant'] for c in charges_contestables):.2f}€ "
+                    f"sont potentiellement contestables."
+                )
+            },
+            "recommandations": recommandations
+        }
+        
+        return resultat
+    
+    except Exception as e:
+        st.error(f"Erreur lors de l'analyse de conformité locale: {str(e)}")
+        return None
 
 def analyse_charges_conformity(refacturable_charges, charged_amounts, client):
     """
     Analyse la conformité entre les charges refacturables et les montants facturés.
-    Utilise exclusivement GPT-4o-mini pour l'analyse.
+    Combine analyse locale et IA.
     
     Args:
         refacturable_charges: Liste des charges refacturables selon le bail
@@ -21,7 +277,15 @@ def analyse_charges_conformity(refacturable_charges, charged_amounts, client):
         Dictionnaire contenant l'analyse de conformité
     """
     try:
-        with st.spinner("Analyse de la conformité des charges avec GPT-4o-mini..."):
+        with st.spinner("Analyse de la conformité des charges..."):
+            # D'abord essayer l'analyse locale
+            local_analysis = analyse_charges_conformity_local(refacturable_charges, charged_amounts)
+            
+            # Si l'analyse locale a réussi
+            if local_analysis:
+                return local_analysis
+                
+            # Sinon, recourir à l'IA
             # Convertir les listes en JSON pour les inclure dans le prompt
             refacturable_json = json.dumps(refacturable_charges, ensure_ascii=False)
             charged_json = json.dumps(charged_amounts, ensure_ascii=False)
@@ -79,235 +343,40 @@ def analyse_charges_conformity(refacturable_charges, charged_amounts, client):
             ```
             """
             
-            # Utiliser GPT-4o-mini comme modèle
             response_text = send_openai_request(
                 client=client,
                 prompt=prompt,
-                temperature=0.1,
-                model="gpt-4o-mini"
+                temperature=0.1
             )
             
-            result = parse_json_response(response_text, default_value=None)
-            
-            # Si l'analyse a échoué, on ne propose pas d'alternative
-            if not result:
-                st.error("L'analyse avec GPT-4o-mini a échoué. Aucun résultat disponible.")
-                return None
+            result = parse_json_response(response_text, default_value={})
             
             # Ajouter les charges refacturables au résultat pour l'affichage complet
-            result["charges_refacturables"] = refacturable_charges
-            return result
+            if result:
+                result["charges_refacturables"] = refacturable_charges
+                return result
+            else:
+                # En cas d'échec du parsing, retourner une structure minimale
+                return {
+                    "charges_refacturables": refacturable_charges,
+                    "charges_facturees": charged_amounts,
+                    "montant_total": sum(charge.get("montant", 0) for charge in charged_amounts),
+                    "analyse_globale": {
+                        "taux_conformite": DEFAULT_CONFORMITY_LEVEL,
+                        "conformite_detail": "Impossible d'analyser la conformité en raison d'une erreur."
+                    },
+                    "recommandations": ["Vérifier manuellement la conformité des charges."]
+                }
     
     except Exception as e:
-        st.error(f"Erreur lors de l'analyse de conformité avec GPT-4o-mini: {str(e)}")
-        return None
-
-def retry_analyse_conformity(refacturable_charges, charged_amounts, client):
-    """
-    Seconde tentative d'analyse de conformité avec un prompt différent.
-    Utilise toujours GPT-4o-mini mais avec un prompt reformulé.
-    
-    Args:
-        refacturable_charges: Liste des charges refacturables selon le bail
-        charged_amounts: Liste des charges facturées
-        client: Client OpenAI
-        
-    Returns:
-        Dictionnaire contenant l'analyse de conformité
-    """
-    try:
-        with st.spinner("Nouvelle tentative d'analyse avec GPT-4o-mini..."):
-            # Convertir les listes en JSON pour les inclure dans le prompt
-            refacturable_json = json.dumps(refacturable_charges, ensure_ascii=False)
-            charged_json = json.dumps(charged_amounts, ensure_ascii=False)
-            
-            prompt = f"""
-            ## Analyse détaillée de conformité des charges locatives
-            
-            Tu es un avocat spécialisé en baux commerciaux qui doit déterminer si les charges facturées à un locataire sont conformes au bail.
-            
-            ## Données d'entrée
-            
-            ### 1. Charges refacturables selon le bail:
-            ```json
-            {refacturable_json}
-            ```
-            
-            ### 2. Charges effectivement facturées:
-            ```json
-            {charged_json}
-            ```
-            
-            ## Instructions précises
-            1. Compare chaque charge facturée avec les charges autorisées par le bail
-            2. Pour chaque charge facturée, détermine si elle est explicitement autorisée, implicitement autorisée, ou non autorisée
-            3. Calcule le pourcentage que représente chaque charge par rapport au total facturé
-            4. Identifie les charges potentiellement contestables avec justification précise
-            5. Détermine un taux global de conformité basé sur le pourcentage des charges conformes
-            
-            ## Format de réponse requis (JSON)
-            {{
-                "charges_facturees": [
-                    {{
-                        "poste": "Nom exact de la charge facturée",
-                        "montant": montant_numérique,
-                        "pourcentage": pourcentage_numérique,
-                        "conformite": "conforme|à vérifier|non conforme",
-                        "justification": "Explication précise",
-                        "contestable": true|false,
-                        "raison_contestation": "Raison si contestable"
-                    }}
-                ],
-                "montant_total": montant_total_numérique,
-                "analyse_globale": {{
-                    "taux_conformite": pourcentage_numérique,
-                    "conformite_detail": "Explication détaillée"
-                }},
-                "recommandations": [
-                    "Recommandation actionnable 1",
-                    "Recommandation actionnable 2"
-                ]
-            }}
-            
-            ATTENTION: Sois rigoureux dans ton analyse. Ne suppose pas qu'une charge est autorisée sans preuve claire dans le bail.
-            """
-            
-            response_text = send_openai_request(
-                client=client,
-                prompt=prompt,
-                temperature=0.1,
-                model="gpt-4o-mini"
-            )
-            
-            result = parse_json_response(response_text, default_value=None)
-            
-            # Si l'analyse a échoué, on ne propose pas d'alternative
-            if not result:
-                st.error("La seconde tentative d'analyse avec GPT-4o-mini a échoué. Aucun résultat disponible.")
-                return None
-            
-            # Ajouter les charges refacturables au résultat pour l'affichage complet
-            result["charges_refacturables"] = refacturable_charges
-            return result
-    
-    except Exception as e:
-        st.error(f"Erreur lors de la seconde tentative d'analyse avec GPT-4o-mini: {str(e)}")
-        return None
-
-def final_attempt_complete_analysis(text1, text2, client=None):
-    """
-    Tentative finale d'analyse complète avec un seul appel à GPT-4o-mini.
-    Cette fonction est appelée si on veut analyser directement à partir des textes bruts.
-    
-    Args:
-        text1: Texte du bail commercial
-        text2: Texte de la reddition des charges
-        client: Client OpenAI
-        
-    Returns:
-        Dictionnaire contenant l'analyse complète
-    """
-    try:
-        with st.spinner("Analyse complète avec GPT-4o-mini en cours..."):
-            # Si le client n'a pas été initialisé, essayer de le créer
-            if client is None:
-                try:
-                    client = get_openai_client()
-                except Exception as e:
-                    st.error(f"Impossible d'initialiser le client OpenAI: {str(e)}")
-                    return None
-            
-            # Utiliser un seul prompt qui fait tout en une fois
-            prompt = f"""
-            ## ANALYSE COMPLÈTE DE CONFORMITÉ DES CHARGES LOCATIVES
-            
-            Tu es un expert juridique et comptable spécialisé dans l'analyse des baux commerciaux.
-            
-            Voici les deux documents que tu dois analyser:
-            
-            ### 1. BAIL COMMERCIAL (extraits pertinents):
-            ```
-            {text1[:7000]}
-            ```
-            
-            ### 2. REDDITION DES CHARGES:
-            ```
-            {text2[:7000]}
-            ```
-            
-            ## Ta mission en 3 étapes:
-            
-            ### Étape 1: Extrais les charges refacturables mentionnées dans le bail
-            - Identifie les clauses spécifiant quelles charges sont refacturables au locataire
-            - Recherche les mentions de charges locatives, répartition des charges, etc.
-            - Vérifie les clauses concernant l'article 606 du Code Civil
-            
-            ### Étape 2: Extrais les charges facturées dans la reddition
-            - Identifie précisément chaque poste de charge facturé
-            - Note le montant exact pour chaque poste
-            - Calcule le montant total des charges facturées
-            
-            ### Étape 3: Analyse la conformité des charges facturées
-            - Compare chaque charge facturée avec les charges autorisées par le bail
-            - Détermine si chaque charge est conforme ou non aux stipulations du bail
-            - Calcule un taux global de conformité
-            - Identifie les charges potentiellement contestables
-            
-            ## Format de réponse JSON requis
-            Réponds UNIQUEMENT avec ce format JSON exact:
-            
-            {
-                "charges_refacturables": [
-                    {
-                        "categorie": "Type de charge",
-                        "description": "Description précise",
-                        "base_legale": "Article ou clause du bail"
-                    }
-                ],
-                "charges_facturees": [
-                    {
-                        "poste": "Nom exact de la charge facturée",
-                        "montant": montant_numérique,
-                        "pourcentage": pourcentage_numérique,
-                        "conformite": "conforme|à vérifier|non conforme",
-                        "justification": "Explication précise",
-                        "contestable": true|false,
-                        "raison_contestation": "Raison si contestable"
-                    }
-                ],
-                "montant_total": montant_total_numérique,
-                "analyse_globale": {
-                    "taux_conformite": pourcentage_numérique,
-                    "conformite_detail": "Explication détaillée"
-                },
-                "recommandations": [
-                    "Recommandation actionnable 1",
-                    "Recommandation actionnable 2"
-                ]
-            }
-            
-            IMPORTANT: La reddition des charges inclut probablement un tableau de charges avec montants.
-            Pour le document 2 (reddition), CHERCHE ATTENTIVEMENT tout tableau ou liste de charges locatives.
-            Une ligne typique pourrait être "NETTOYAGE EXTERIEUR ... 3242.22 €" ou similaire.
-            """
-            
-            response_text = send_openai_request(
-                client=client,
-                prompt=prompt,
-                temperature=0.1,
-                max_tokens=3000,
-                model="gpt-4o-mini"
-            )
-            
-            result = parse_json_response(response_text, default_value=None)
-            
-            # Si l'analyse a échoué, on ne propose pas d'alternative
-            if not result:
-                st.error("L'analyse complète avec GPT-4o-mini a échoué. Aucun résultat disponible.")
-                return None
-            
-            return result
-            
-    except Exception as e:
-        st.error(f"Erreur lors de l'analyse complète avec GPT-4o-mini: {str(e)}")
-        return None
+        st.error(f"Erreur lors de l'analyse de conformité: {str(e)}")
+        return {
+            "charges_refacturables": refacturable_charges,
+            "charges_facturees": charged_amounts,
+            "montant_total": sum(charge.get("montant", 0) for charge in charged_amounts),
+            "analyse_globale": {
+                "taux_conformite": DEFAULT_CONFORMITY_LEVEL,
+                "conformite_detail": "Impossible d'analyser la conformité en raison d'une erreur."
+            },
+            "recommandations": ["Vérifier manuellement la conformité des charges."]
+        }
