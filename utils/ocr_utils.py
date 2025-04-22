@@ -12,7 +12,6 @@ import tempfile
 import requests
 import os
 import io
-from pdf2image import convert_from_bytes, convert_from_path
 from PIL import Image
 from config import get_ocr_api_key
 
@@ -61,16 +60,16 @@ def extract_text_with_multiple_methods(img):
     try:
         text1 = pytesseract.image_to_string(img, lang='fra', config='--psm 6')
         results.append((text1, len(text1.strip())))
-    except:
-        pass
+    except Exception as e:
+        st.warning(f"Erreur OCR méthode 1: {str(e)}")
     
     # Méthode 2: Prétraitement avancé
     try:
         processed = preprocess_image_for_ocr(img)
         text2 = pytesseract.image_to_string(processed, lang='fra', config='--psm 6')
         results.append((text2, len(text2.strip())))
-    except:
-        pass
+    except Exception as e:
+        st.warning(f"Erreur OCR méthode 2: {str(e)}")
     
     # Méthode 3: Binarisation simple
     try:
@@ -78,15 +77,15 @@ def extract_text_with_multiple_methods(img):
         _, binary = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY)
         text3 = pytesseract.image_to_string(binary, lang='fra', config='--psm 6')
         results.append((text3, len(text3.strip())))
-    except:
-        pass
+    except Exception as e:
+        st.warning(f"Erreur OCR méthode 3: {str(e)}")
     
     # Méthode 4: Orientation spécifique pour les tableaux
     try:
         text4 = pytesseract.image_to_string(img, lang='fra', config='--psm 4')
         results.append((text4, len(text4.strip())))
-    except:
-        pass
+    except Exception as e:
+        st.warning(f"Erreur OCR méthode 4: {str(e)}")
     
     # Retourner le résultat avec le plus de texte
     if results:
@@ -114,11 +113,12 @@ def extract_text_from_image(uploaded_file):
         return extract_text_with_multiple_methods(img)
     
     except Exception as e:
-        st.error(f"Erreur lors de l'extraction du texte de l'image: {str(e)}")
+        st.warning(f"Erreur lors de l'extraction du texte de l'image: {str(e)}")
         # Tentative de secours avec l'API OCR
         try:
             return ocr_from_image_using_api(uploaded_file)
-        except:
+        except Exception as ocr_e:
+            st.warning(f"Erreur API OCR: {str(ocr_e)}")
             return ""
 
 def extract_text_from_pdf(uploaded_file):
@@ -135,6 +135,7 @@ def extract_text_from_pdf(uploaded_file):
     
     # Essayer d'abord l'extraction native de PyPDF2
     try:
+        uploaded_file.seek(0)
         pdf_reader = PyPDF2.PdfReader(uploaded_file)
         for page_num in range(len(pdf_reader.pages)):
             page_text = pdf_reader.pages[page_num].extract_text()
@@ -148,52 +149,58 @@ def extract_text_from_pdf(uploaded_file):
         st.info("Extraction de texte limitée, utilisation de l'OCR...")
         
         try:
-            # Convertir le PDF en images
+            # Utiliser directement l'API OCR external comme méthode fiable
             uploaded_file.seek(0)
-            pdf_bytes = uploaded_file.getvalue()
-            
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
-                tmp.write(pdf_bytes)
-                temp_pdf_path = tmp.name
-            
-            # Augmenter le DPI pour une meilleure qualité
-            images = convert_from_path(temp_pdf_path, dpi=300)
-            
-            # Nettoyer le fichier temporaire
-            try:
-                os.unlink(temp_pdf_path)
-            except:
-                pass
-            
-            # OCR sur chaque page
-            page_texts = []
-            for i, img in enumerate(images):
-                with st.spinner(f"OCR sur la page {i+1}/{len(images)}..."):
-                    # Convertir PIL Image en format OpenCV
-                    open_cv_image = np.array(img)
-                    # RGB vers BGR (format OpenCV)
-                    open_cv_image = open_cv_image[:, :, ::-1].copy()
-                    
-                    # Extraire le texte avec notre méthode multiple
-                    page_text = extract_text_with_multiple_methods(open_cv_image)
-                    page_texts.append(page_text)
-            
-            # Si on a des résultats d'OCR, les utiliser
-            if any(page_texts):
-                text = "\n\n".join(page_texts)
-            # Sinon, dernier recours: API OCR externe
-            else:
-                uploaded_file.seek(0)
-                text = ocr_from_pdf_using_api(uploaded_file)
+            text = ocr_from_pdf_using_api(uploaded_file)
+            if text:
+                return text
                 
         except Exception as e:
-            st.error(f"Erreur lors de l'OCR du PDF: {str(e)}")
-            # Dernier recours: API OCR externe
+            st.warning(f"Erreur lors de l'OCR du PDF via API: {str(e)}")
+            
+            # Essayer avec pdf2image mais gérer gracieusement les erreurs
             try:
+                # Import conditionnel pour éviter les erreurs d'importation
+                from pdf2image import convert_from_bytes
+                
                 uploaded_file.seek(0)
-                text = ocr_from_pdf_using_api(uploaded_file)
-            except:
-                pass
+                pdf_bytes = uploaded_file.getvalue()
+                
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+                    tmp.write(pdf_bytes)
+                    temp_pdf_path = tmp.name
+                
+                # Augmenter le DPI pour une meilleure qualité
+                images = convert_from_bytes(pdf_bytes, dpi=300)
+                
+                # Nettoyer le fichier temporaire
+                try:
+                    os.unlink(temp_pdf_path)
+                except:
+                    pass
+                
+                # OCR sur chaque page
+                page_texts = []
+                for i, img in enumerate(images):
+                    with st.spinner(f"OCR sur la page {i+1}/{len(images)}..."):
+                        # Convertir PIL Image en format OpenCV
+                        open_cv_image = np.array(img)
+                        # RGB vers BGR (format OpenCV)
+                        open_cv_image = open_cv_image[:, :, ::-1].copy()
+                        
+                        # Extraire le texte avec notre méthode multiple
+                        page_text = extract_text_with_multiple_methods(open_cv_image)
+                        page_texts.append(page_text)
+                
+                # Si on a des résultats d'OCR, les utiliser
+                if any(page_texts):
+                    text = "\n\n".join(page_texts)
+                
+            except ImportError:
+                st.warning("pdf2image ou poppler n'est pas correctement installé. Utilisation de l'API OCR.")
+                
+            except Exception as pdf2image_error:
+                st.warning(f"Erreur lors de l'utilisation de pdf2image: {str(pdf2image_error)}")
 
     return text
 
@@ -226,11 +233,11 @@ def ocr_from_image_using_api(uploaded_file):
         if result["OCRExitCode"] == 1:
             return result['ParsedResults'][0]['ParsedText']
         else:
-            st.error("Erreur dans le traitement OCR API: " + result.get("ErrorMessage", "Erreur inconnue"))
+            st.warning("Erreur dans le traitement OCR API: " + result.get("ErrorMessage", "Erreur inconnue"))
             return ""
     
     except Exception as e:
-        st.error(f"Erreur lors de l'utilisation de l'API OCR: {str(e)}")
+        st.warning(f"Erreur lors de l'utilisation de l'API OCR: {str(e)}")
         return ""
 
 def ocr_from_pdf_using_api(uploaded_file):
@@ -276,11 +283,11 @@ def ocr_from_pdf_using_api(uploaded_file):
         if result["OCRExitCode"] == 1:
             return result['ParsedResults'][0]['ParsedText']
         else:
-            st.error("Erreur dans le traitement OCR API: " + result.get("ErrorMessage", "Erreur inconnue"))
+            st.warning("Erreur dans le traitement OCR API: " + result.get("ErrorMessage", "Erreur inconnue"))
             return ""
     
     except Exception as e:
-        st.error(f"Erreur lors de l'OCR du PDF: {str(e)}")
+        st.warning(f"Erreur lors de l'OCR du PDF via API: {str(e)}")
         return ""
 
 def extract_text_from_docx(uploaded_file):
@@ -297,7 +304,7 @@ def extract_text_from_docx(uploaded_file):
         text = docx2txt.process(uploaded_file)
         return text
     except Exception as e:
-        st.error(f"Erreur lors de l'extraction du texte du fichier Word: {str(e)}")
+        st.warning(f"Erreur lors de l'extraction du texte du fichier Word: {str(e)}")
         return ""
 
 def extract_text_from_txt(uploaded_file):
@@ -313,7 +320,7 @@ def extract_text_from_txt(uploaded_file):
     try:
         return uploaded_file.getvalue().decode("utf-8")
     except Exception as e:
-        st.error(f"Erreur lors de l'extraction du texte du fichier TXT: {str(e)}")
+        st.warning(f"Erreur lors de l'extraction du texte du fichier TXT: {str(e)}")
         return ""
 
 def process_file_with_fallback(uploaded_file):
