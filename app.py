@@ -4,6 +4,10 @@ Module d'intégration des améliorations pour l'analyseur de charges locatives c
 import streamlit as st
 import os
 import tempfile
+import io
+import numpy as np
+import cv2
+from PIL import Image
 from api.openai_client import get_openai_client
 from utils.file_utils import process_multiple_files
 
@@ -54,14 +58,22 @@ def analyze_commercial_lease_charges(bail_files, charges_files):
         for file in charges_files:
             st.info(f"Traitement du fichier: {file.name}")
             file.seek(0)
-            charges_images.append(file.getvalue())
             
-            file.seek(0)
-            file_content = process_file_with_fallback(file)
-            if file_content:
-                charges_text += f"\n\n--- Début du fichier: {file.name} ---\n\n"
-                charges_text += file_content
-                charges_text += f"\n\n--- Fin du fichier: {file.name} ---\n\n"
+            try:
+                # Sauvegarder l'image en mémoire pour traitement ultérieur
+                file_bytes = file.getvalue()
+                charges_images.append(file_bytes)
+                
+                # Réessayer l'OCR sur le fichier
+                file.seek(0)
+                file_content = process_file_with_fallback(file)
+                
+                if file_content:
+                    charges_text += f"\n\n--- Début du fichier: {file.name} ---\n\n"
+                    charges_text += file_content
+                    charges_text += f"\n\n--- Fin du fichier: {file.name} ---\n\n"
+            except Exception as e:
+                st.warning(f"Erreur lors du traitement du fichier {file.name}: {str(e)}")
     
     if not bail_text or len(bail_text.strip()) < 100:
         st.error("❌ Impossible d'extraire suffisamment de texte du bail. Vérifiez vos fichiers.")
@@ -103,9 +115,29 @@ def analyze_commercial_lease_charges(bail_files, charges_files):
         # Tentative d'extraction de tableaux à partir des images
         charged_amounts = None
         
+        # Modification de l'approche de traitement des images
         for image_data in charges_images:
             try:
-                table_charges = detect_and_extract_tables(charges_text, image_data)
+                # Convertir les données binaires en image OpenCV pour debug
+                nparr = np.frombuffer(image_data, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                
+                if img is None:
+                    st.warning("Image non valide pour la détection de tableaux")
+                    continue
+                    
+                # Enregistrer temporairement l'image pour pouvoir la traiter
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                    cv2.imwrite(tmp.name, img)
+                    
+                # Utiliser l'image sauvegardée pour l'extraction de tableaux
+                with open(tmp.name, 'rb') as f:
+                    safe_image_data = f.read()
+                    table_charges = detect_and_extract_tables(charges_text, safe_image_data)
+                    
+                # Nettoyer le fichier temporaire
+                os.unlink(tmp.name)
+                
                 if table_charges and len(table_charges) >= 3:  # Au moins 3 charges identifiées
                     charged_amounts = table_charges
                     break
@@ -123,7 +155,7 @@ def analyze_commercial_lease_charges(bail_files, charges_files):
         
         # Si toujours rien, utiliser l'extraction locale (sans IA)
         if not charged_amounts:
-            from analysis.local_charges_analyzer import extract_charged_amounts_locally
+            from analysis.local_bail_analyzer import extract_charged_amounts_locally
             charged_amounts = extract_charged_amounts_locally(charges_text)
         
         if charged_amounts:
