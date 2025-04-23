@@ -231,7 +231,11 @@ def ocr_from_image_using_api(uploaded_file):
         result = response.json()
         
         if result["OCRExitCode"] == 1:
-            return result['ParsedResults'][0]['ParsedText']
+            parsed_text = result['ParsedResults'][0]['ParsedText']
+            # Fix pour l'erreur "can only concatenate str (not 'list') to str"
+            if isinstance(parsed_text, list):
+                parsed_text = ''.join(parsed_text)
+            return parsed_text
         else:
             st.warning("Erreur dans le traitement OCR API: " + result.get("ErrorMessage", "Erreur inconnue"))
             return ""
@@ -281,7 +285,11 @@ def ocr_from_pdf_using_api(uploaded_file):
         result = response.json()
 
         if result["OCRExitCode"] == 1:
-            return result['ParsedResults'][0]['ParsedText']
+            parsed_text = result['ParsedResults'][0]['ParsedText']
+            # Fix pour l'erreur "can only concatenate str (not 'list') to str"
+            if isinstance(parsed_text, list):
+                parsed_text = ''.join(parsed_text)
+            return parsed_text
         else:
             st.warning("Erreur dans le traitement OCR API: " + result.get("ErrorMessage", "Erreur inconnue"))
             return ""
