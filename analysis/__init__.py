@@ -3,13 +3,6 @@ Module d'analyse des charges locatives commerciales.
 """
 import streamlit as st
 from api.openai_client import get_openai_client
-from analysis.bail_analyzer import extract_refacturable_charges_from_bail, retry_extract_refacturable_charges
-from analysis.charges_analyzer import extract_charged_amounts_from_reddition, extract_charged_amounts_fallback
-from analysis.conformity_analyzer import (
-    analyse_charges_conformity,
-    retry_analyse_conformity,
-    final_attempt_complete_analysis
-)
 
 def analyze_with_openai(text1, text2, document_type):
     """
@@ -29,6 +22,11 @@ def analyze_with_openai(text1, text2, document_type):
     try:
         # Initialiser le client OpenAI
         client = get_openai_client()
+        
+        # Import à l'intérieur de la fonction pour éviter les imports circulaires
+        from analysis.bail_analyzer import extract_refacturable_charges_from_bail, retry_extract_refacturable_charges
+        from analysis.charges_analyzer import extract_charged_amounts_from_reddition, extract_charged_amounts_fallback
+        from analysis.conformity_analyzer import analyse_charges_conformity, retry_analyse_conformity, final_attempt_complete_analysis
         
         with st.spinner("Étape 1/3: Extraction des charges refacturables du bail..."):
             # Extraire les charges refacturables mentionnées dans le bail
@@ -72,6 +70,8 @@ def analyze_with_openai(text1, text2, document_type):
         
         # Vérifier si client a été initialisé avant de l'utiliser
         if client:
+            # Import à l'intérieur du bloc pour éviter les problèmes d'import circulaire
+            from analysis.conformity_analyzer import final_attempt_complete_analysis
             return final_attempt_complete_analysis(text1, text2, client)
         else:
             # Si client n'a pas été initialisé, créer un résultat vide
