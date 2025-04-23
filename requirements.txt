@@ -11,3 +11,4 @@ opencv-python==4.8.0.74
 requests==2.31.0
 reportlab==4.0.5
 opencv-python-headless==4.8.0.74
+Pillow>=9.5.0
