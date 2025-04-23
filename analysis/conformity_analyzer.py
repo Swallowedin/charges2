@@ -380,3 +380,170 @@ def analyse_charges_conformity(refacturable_charges, charged_amounts, client):
             },
             "recommandations": ["Vérifier manuellement la conformité des charges."]
         }
+
+def retry_analyse_conformity(refacturable_charges, charged_amounts, client):
+    """
+    Seconde tentative d'analyse de conformité avec un prompt différent.
+    
+    Args:
+        refacturable_charges: Liste des charges refacturables selon le bail
+        charged_amounts: Liste des charges facturées
+        client: Client OpenAI
+        
+    Returns:
+        Dictionnaire contenant l'analyse de conformité
+    """
+    try:
+        # Convertir les listes en JSON pour les inclure dans le prompt
+        refacturable_json = json.dumps(refacturable_charges, ensure_ascii=False)
+        charged_json = json.dumps(charged_amounts, ensure_ascii=False)
+        
+        prompt = f"""
+        ## ANALYSE SIMPLIFIÉE DE CONFORMITÉ DES CHARGES
+        
+        Analyse la conformité entre ces deux listes:
+        
+        1. CHARGES REFACTURABLES SELON LE BAIL:
+        ```json
+        {refacturable_json}
+        ```
+        
+        2. CHARGES FACTURÉES:
+        ```json
+        {charged_json}
+        ```
+        
+        Ta mission:
+        - Compare chaque charge facturée avec les charges refacturables
+        - Indique si chaque charge facturée est "conforme", "à vérifier" ou "non conforme"
+        - Calcule le taux global de conformité (pourcentage des charges conformes)
+        
+        RÉPONDS UNIQUEMENT EN JSON:
+        {{
+          "charges_facturees": [
+            {{
+              "poste": "...",
+              "montant": X.XX,
+              "pourcentage": XX.X,
+              "conformite": "conforme|à vérifier|non conforme",
+              "contestable": true|false,
+              "raison_contestation": "..."
+            }}
+          ],
+          "montant_total": XXX.XX,
+          "analyse_globale": {{
+            "taux_conformite": XX,
+            "conformite_detail": "..."
+          }},
+          "recommandations": ["...", "..."]
+        }}
+        """
+        
+        response_text = send_openai_request(
+            client=client,
+            prompt=prompt,
+            temperature=0
+        )
+        
+        result = parse_json_response(response_text, default_value={})
+        
+        # Ajouter les charges refacturables au résultat
+        if result:
+            result["charges_refacturables"] = refacturable_charges
+            return result
+        else:
+            return None
+    
+    except Exception as e:
+        st.warning(f"Erreur lors de la seconde tentative d'analyse: {str(e)}")
+        return None
+
+def final_attempt_complete_analysis(text1, text2, client):
+    """
+    Dernière tentative d'analyse complète en cas d'échec des méthodes précédentes.
+    
+    Args:
+        text1: Texte du bail commercial
+        text2: Texte de la reddition des charges
+        client: Client OpenAI
+        
+    Returns:
+        Dictionnaire contenant l'analyse complète
+    """
+    try:
+        # Préparation d'un prompt simplifié envoyant les deux textes complets
+        prompt = f"""
+        ## ANALYSE COMPLÈTE DES CHARGES LOCATIVES COMMERCIALES (SIMPLIFIÉE)
+        
+        Analysez ces deux documents et déterminez la conformité des charges facturées par rapport au bail:
+        
+        ### BAIL COMMERCIAL:
+        ```
+        {text1[:5000]}... [Texte tronqué pour brevité]
+        ```
+        
+        ### REDDITION DES CHARGES:
+        ```
+        {text2[:5000]}... [Texte tronqué pour brevité]
+        ```
+        
+        INSTRUCTIONS:
+        1. Identifiez d'abord les charges refacturables mentionnées dans le bail
+        2. Ensuite, identifiez les charges effectivement facturées
+        3. Analysez la conformité entre les deux
+        
+        FORMAT JSON ATTENDU:
+        {{
+          "charges_refacturables": [
+            {{ "categorie": "...", "description": "...", "base_legale": "...", "certitude": "..." }}
+          ],
+          "charges_facturees": [
+            {{ "poste": "...", "montant": X.XX, "pourcentage": XX.X, "conformite": "...", "contestable": true|false, "raison_contestation": "..." }}
+          ],
+          "montant_total": XXX.XX,
+          "analyse_globale": {{ "taux_conformite": XX, "conformite_detail": "..." }},
+          "recommandations": ["..."]
+        }}
+        """
+        
+        response_text = send_openai_request(
+            client=client,
+            prompt=prompt,
+            temperature=0.1,
+            max_tokens=2000  # Limiter pour éviter timeout
+        )
+        
+        result = parse_json_response(response_text, default_value={})
+        
+        # Vérifier la validité du résultat
+        if result and "charges_facturees" in result and "analyse_globale" in result:
+            return result
+        else:
+            # Structure minimale en cas d'échec
+            return {
+                "charges_refacturables": [],
+                "charges_facturees": [],
+                "montant_total": 0,
+                "analyse_globale": {
+                    "taux_conformite": DEFAULT_CONFORMITY_LEVEL,
+                    "conformite_detail": "Analyse de secours non concluante."
+                },
+                "recommandations": [
+                    "L'analyse automatique n'a pas pu être complétée. Vérifiez manuellement la conformité des charges."
+                ]
+            }
+    
+    except Exception as e:
+        st.error(f"Erreur lors de la tentative finale d'analyse: {str(e)}")
+        return {
+            "charges_refacturables": [],
+            "charges_facturees": [],
+            "montant_total": 0,
+            "analyse_globale": {
+                "taux_conformite": DEFAULT_CONFORMITY_LEVEL,
+                "conformite_detail": f"L'analyse a échoué: {str(e)}"
+            },
+            "recommandations": [
+                "L'analyse automatique a rencontré des erreurs. Une vérification manuelle est recommandée."
+            ]
+        }
