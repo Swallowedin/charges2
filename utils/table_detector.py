@@ -130,76 +130,6 @@ def preprocess_table_image(table_img):
         st.warning(f"Erreur lors du prétraitement de l'image du tableau: {str(e)}")
         return None
 
-def detect_and_extract_line_structure(table_img):
-    """
-    Détecte la structure des lignes et colonnes dans un tableau.
-    
-    Args:
-        table_img: Image du tableau
-        
-    Returns:
-        Listes des positions de lignes et colonnes
-    """
-    if table_img is None or table_img.size == 0:
-        return [], []
-        
-    try:
-        # Prétraitement pour détecter les lignes
-        gray = cv2.cvtColor(table_img, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blur, 50, 150, apertureSize=3)
-        
-        # Détecter les lignes horizontales et verticales avec Hough
-        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=100, minLineLength=100, maxLineGap=10)
-        
-        h_lines = []
-        v_lines = []
-        
-        if lines is not None:
-            for line in lines:
-                x1, y1, x2, y2 = line[0]
-                
-                # Calculer l'angle pour déterminer si la ligne est horizontale ou verticale
-                angle = np.arctan2(y2 - y1, x2 - x1) * 180.0 / np.pi
-                
-                if abs(angle) < 20 or abs(angle) > 160:  # Presque horizontale
-                    h_lines.append((min(y1, y2), max(y1, y2)))
-                elif abs(angle - 90) < 20 or abs(angle + 90) < 20:  # Presque verticale
-                    v_lines.append((min(x1, x2), max(x1, x2)))
-        
-        # Regrouper les lignes horizontales proches
-        h_lines.sort()
-        h_clusters = []
-        if h_lines:
-            current_cluster = [h_lines[0]]
-            for i in range(1, len(h_lines)):
-                if h_lines[i][0] - current_cluster[-1][1] < 10:  # Lignes proches
-                    current_cluster.append(h_lines[i])
-                else:
-                    h_clusters.append(np.mean([line[0] for line in current_cluster]))
-                    current_cluster = [h_lines[i]]
-            
-            h_clusters.append(np.mean([line[0] for line in current_cluster]))
-        
-        # Regrouper les lignes verticales proches
-        v_lines.sort()
-        v_clusters = []
-        if v_lines:
-            current_cluster = [v_lines[0]]
-            for i in range(1, len(v_lines)):
-                if v_lines[i][0] - current_cluster[-1][1] < 10:  # Lignes proches
-                    current_cluster.append(v_lines[i])
-                else:
-                    v_clusters.append(np.mean([line[0] for line in current_cluster]))
-                    current_cluster = [v_lines[i]]
-                    
-            v_clusters.append(np.mean([line[0] for line in current_cluster]))
-        
-        return h_clusters, v_clusters
-    except Exception as e:
-        st.warning(f"Erreur lors de la détection de la structure du tableau: {str(e)}")
-        return [], []
-
 def ocr_table_cell(cell_img):
     """
     Applique l'OCR à une cellule de tableau.
@@ -243,72 +173,6 @@ def ocr_table_cell(cell_img):
         st.warning(f"Erreur lors de l'OCR de la cellule: {str(e)}")
         return ""
 
-def extract_table_data(table_img):
-    """
-    Extrait les données d'un tableau en utilisant la détection de structure.
-    
-    Args:
-        table_img: Image du tableau
-        
-    Returns:
-        Liste de dictionnaires représentant les données du tableau
-    """
-    if table_img is None or table_img.size == 0:
-        return []
-        
-    try:
-        # Détecter la structure du tableau
-        h_lines, v_lines = detect_and_extract_line_structure(table_img)
-        
-        # Si la détection de structure échoue, utiliser la méthode par grille
-        if len(h_lines) < 2 or len(v_lines) < 2:
-            return ocr_table_by_grid(table_img)
-        
-        # Trier les positions des lignes et colonnes
-        h_lines.sort()
-        v_lines.sort()
-        
-        # Créer une matrice pour stocker le texte des cellules
-        rows = len(h_lines) - 1
-        cols = len(v_lines) - 1
-        
-        if rows <= 0 or cols <= 0:
-            return []
-        
-        table_data = []
-        
-        # Parcourir les cellules
-        for i in range(rows):
-            row_data = {}
-            for j in range(cols):
-                # Définir les limites de la cellule
-                try:
-                    y1, y2 = int(h_lines[i]), int(h_lines[i+1])
-                    x1, x2 = int(v_lines[j]), int(v_lines[j+1])
-                    
-                    # Vérifier que les dimensions sont valides
-                    if x1 >= x2 or y1 >= y2 or x2 > table_img.shape[1] or y2 > table_img.shape[0]:
-                        cell_text = ""
-                    else:
-                        # Extraire la cellule
-                        cell_img = table_img[y1:y2, x1:x2]
-                        
-                        # Extraire le texte de la cellule
-                        cell_text = ocr_table_cell(cell_img)
-                except Exception as cell_error:
-                    st.warning(f"Erreur lors de l'extraction de la cellule [{i},{j}]: {str(cell_error)}")
-                    cell_text = ""
-                
-                # Stocker le résultat
-                row_data[f"col_{j}"] = cell_text
-            
-            table_data.append(row_data)
-        
-        return table_data
-    except Exception as e:
-        st.warning(f"Erreur lors de l'extraction des données du tableau: {str(e)}")
-        return []
-
 def ocr_table_by_grid(table_img):
     """
     Extrait les données d'un tableau en le divisant en grille uniforme.
@@ -323,68 +187,18 @@ def ocr_table_by_grid(table_img):
         return []
         
     try:
-        # Prétraiter l'image
-        preprocessed = preprocess_table_image(table_img)
-        if preprocessed is None:
-            return []
-            
-        # Estimer le nombre de lignes et colonnes
-        height, width = preprocessed.shape[:2]
+        # Estimation du nombre de lignes et colonnes
+        height, width = table_img.shape[:2]
         
-        # Analyse de la projection horizontale pour estimer les lignes
-        h_projection = np.sum(preprocessed, axis=1)
-        h_peaks = np.where(h_projection > np.median(h_projection) * 1.5)[0]
+        # Division simple en grille
+        est_rows = max(3, height // 50)  # Estimation grossière
+        est_cols = max(3, width // 100)  # Estimation grossière
         
-        # Créer des clusters pour les lignes
-        h_clusters = []
-        if len(h_peaks) > 0:
-            current_cluster = [h_peaks[0]]
-            for i in range(1, len(h_peaks)):
-                if h_peaks[i] - current_cluster[-1] <= 5:  # Points proches
-                    current_cluster.append(h_peaks[i])
-                else:
-                    h_clusters.append(int(np.mean(current_cluster)))
-                    current_cluster = [h_peaks[i]]
-            h_clusters.append(int(np.mean(current_cluster)))
+        row_height = height // est_rows
+        col_width = width // est_cols
         
-        # Si la détection des lignes échoue, diviser uniformément
-        if len(h_clusters) < 3:  # Au moins 2 lignes de données + en-tête
-            est_rows = max(3, height // 50)  # Estimation grossière
-            row_height = height // est_rows
-            h_clusters = [i * row_height for i in range(est_rows)]
-        
-        # Analyse de la projection verticale pour estimer les colonnes
-        v_projection = np.sum(preprocessed, axis=0)
-        v_peaks = np.where(v_projection > np.median(v_projection) * 1.5)[0]
-        
-        # Créer des clusters pour les colonnes
-        v_clusters = []
-        if len(v_peaks) > 0:
-            current_cluster = [v_peaks[0]]
-            for i in range(1, len(v_peaks)):
-                if v_peaks[i] - current_cluster[-1] <= 5:  # Points proches
-                    current_cluster.append(v_peaks[i])
-                else:
-                    v_clusters.append(int(np.mean(current_cluster)))
-                    current_cluster = [v_peaks[i]]
-            v_clusters.append(int(np.mean(current_cluster)))
-        
-        # Si la détection des colonnes échoue, diviser uniformément
-        if len(v_clusters) < 3:  # Au moins 2 colonnes de données + index
-            est_cols = max(3, width // 100)  # Estimation grossière
-            col_width = width // est_cols
-            v_clusters = [i * col_width for i in range(est_cols)]
-        
-        # Ajouter les limites de l'image
-        if h_clusters[0] > 10:
-            h_clusters.insert(0, 0)
-        if h_clusters[-1] < height - 10:
-            h_clusters.append(height)
-            
-        if v_clusters[0] > 10:
-            v_clusters.insert(0, 0)
-        if v_clusters[-1] < width - 10:
-            v_clusters.append(width)
+        h_clusters = [i * row_height for i in range(est_rows + 1)]
+        v_clusters = [i * col_width for i in range(est_cols + 1)]
         
         # Créer la grille et extraire le texte de chaque cellule
         rows = len(h_clusters) - 1
@@ -425,6 +239,26 @@ def ocr_table_by_grid(table_img):
         return table_data
     except Exception as e:
         st.warning(f"Erreur lors de l'extraction par grille: {str(e)}")
+        return []
+
+def extract_table_data(table_img):
+    """
+    Extrait les données d'un tableau en utilisant la détection de structure.
+    
+    Args:
+        table_img: Image du tableau
+        
+    Returns:
+        Liste de dictionnaires représentant les données du tableau
+    """
+    if table_img is None or table_img.size == 0:
+        return []
+        
+    try:
+        # Essayer la méthode par grille qui est plus robuste
+        return ocr_table_by_grid(table_img)
+    except Exception as e:
+        st.warning(f"Erreur lors de l'extraction des données du tableau: {str(e)}")
         return []
 
 def convert_table_data_to_charges(table_data):
@@ -504,6 +338,45 @@ def convert_table_data_to_charges(table_data):
     
     return charges
 
+def extract_charges_directly_from_text(charges_text):
+    """
+    Extrait les charges directement à partir du texte formaté comme un tableau.
+    
+    Args:
+        charges_text: Texte de la reddition des charges
+        
+    Returns:
+        Liste de dictionnaires contenant les charges facturées
+    """
+    charges = []
+    
+    try:
+        # Rechercher lignes qui suivent un format tabulaire
+        lines = charges_text.strip().split('\n')
+        
+        # Chercher des lignes qui contiennent des montants
+        for line in lines:
+            # Rechercher des motifs de "texte descriptif + montant"
+            match = re.search(r'([A-Za-zÀ-ÿ\s\-\/&\.]+)\s+(\d[\d\s]*[\.,]\d+)', line)
+            if match:
+                desc = match.group(1).strip()
+                amount_str = match.group(2).strip().replace(' ', '').replace(',', '.')
+                
+                # Ignorer les lignes de totaux
+                if desc.lower() in ["total", "sous-total", "somme", "montant", "total charges"]:
+                    continue
+                    
+                try:
+                    amount = float(amount_str)
+                    charges.append({"poste": desc, "montant": amount})
+                except ValueError:
+                    continue
+    
+    except Exception as e:
+        st.warning(f"Erreur lors de l'extraction directe des charges du texte: {str(e)}")
+    
+    return charges
+
 def detect_and_extract_tables(charges_text, image_data=None):
     """
     Détecte et extrait les tableaux de charges à partir du texte ou de l'image.
@@ -515,73 +388,88 @@ def detect_and_extract_tables(charges_text, image_data=None):
     Returns:
         Liste de dictionnaires contenant les charges facturées
     """
+    all_charges = []
+    
+    # Essayer d'abord d'extraire directement à partir du texte formaté comme un tableau
+    if charges_text:
+        # Rechercher le texte contenant "RELEVE INDIVIDUEL DES CHARGES LOCATIVES"
+        if "RELEVE INDIVIDUEL DES CHARGES LOCATIVES" in charges_text:
+            section = charges_text.split("RELEVE INDIVIDUEL DES CHARGES LOCATIVES")[1]
+            # Extraire les lignes potentielles de charges
+            pattern = r'([A-Z][A-Z\s]+)\s+(\d[\d\s]*[\.,]\d+)\s*€?'
+            matches = re.findall(pattern, section)
+            for match in matches:
+                desc = match[0].strip()
+                amount_str = match[1].replace(' ', '').replace(',', '.')
+                try:
+                    amount = float(amount_str)
+                    if amount > 0:  # Ignorer les montants nuls ou négatifs
+                        all_charges.append({"poste": desc, "montant": amount})
+                except ValueError:
+                    continue
+            
+            if all_charges:
+                return all_charges
+    
+    # Si aucune charge trouvée via la méthode de texte, essayer l'extraction d'image
     tables = []
     
     # Si des données d'image sont fournies, les utiliser directement
     if image_data:
         try:
-            # Convertir les données binaires en image
-            nparr = np.frombuffer(image_data, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            
-            if img is None or img.size == 0:
-                st.warning("Impossible de décoder l'image")
-                return []
+            # Tenter de décoder l'image
+            try:
+                # Méthode 1: Utiliser numpy et OpenCV
+                nparr = np.frombuffer(image_data, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                 
-            # Extraire les tableaux
-            tables = extract_tables_from_image(img)
+                # Si l'image est décodée avec succès
+                if img is not None and img.size > 0:
+                    # Extraire les tableaux
+                    tables = extract_tables_from_image(img)
+            except Exception as e1:
+                st.warning(f"Méthode 1 de décodage d'image échouée: {str(e1)}")
+                
+                try:
+                    # Méthode 2: Utiliser PIL
+                    img_io = io.BytesIO(image_data)
+                    pil_img = Image.open(img_io)
+                    
+                    # Convertir l'image PIL en OpenCV
+                    img = np.array(pil_img)
+                    if len(img.shape) == 3 and img.shape[2] == 4:  # Si RGBA
+                        img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+                    elif len(img.shape) == 3 and img.shape[2] == 3:  # Si RGB
+                        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                    
+                    # Vérifier que l'image est valide
+                    if img is not None and img.size > 0:
+                        # Extraire les tableaux
+                        tables = extract_tables_from_image(img)
+                except Exception as e2:
+                    st.warning(f"Méthode 2 de décodage d'image échouée: {str(e2)}")
+                    
+                    # Méthode 3: Sauvegarder et relire le fichier
+                    try:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                            tmp.write(image_data)
+                            tmp_path = tmp.name
+                        
+                        img = cv2.imread(tmp_path)
+                        
+                        # Nettoyer le fichier temporaire
+                        os.unlink(tmp_path)
+                        
+                        # Vérifier que l'image est valide
+                        if img is not None and img.size > 0:
+                            # Extraire les tableaux
+                            tables = extract_tables_from_image(img)
+                    except Exception as e3:
+                        st.warning(f"Méthode 3 de décodage d'image échouée: {str(e3)}")
         except Exception as e:
             st.warning(f"Erreur lors de l'extraction des tableaux de l'image: {str(e)}")
-            return []
-    
-    # Si pas d'image ou aucun tableau extrait, essayer de traiter le texte
-    if not tables and charges_text:
-        try:
-            # Rechercher si on peut extraire un tableau à partir du texte formaté
-            lines = charges_text.strip().split('\n')
-            
-            # Vérifier si le texte contient probablement un tableau (au moins 3 lignes avec des espaces alignés)
-            potential_table_lines = []
-            for line in lines:
-                # Rechercher des motifs qui ressemblent à un format tabulaire
-                if re.search(r'\s{2,}', line) and len(line.strip()) > 10:
-                    potential_table_lines.append(line)
-            
-            # Si on a au moins 3 lignes qui semblent être un tableau
-            if len(potential_table_lines) >= 3:
-                # Extraire les charges directement du texte
-                charges = []
-                for line in potential_table_lines[1:]:  # Ignorer la première ligne (en-tête)
-                    # Diviser la ligne par espaces multiples
-                    parts = re.split(r'\s{2,}', line.strip())
-                    
-                    if len(parts) >= 2:
-                        desc = parts[0].strip()
-                        # Le montant est généralement le dernier élément
-                        amount_str = parts[-1].strip()
-                        
-                        # Ignorer les lignes de totaux
-                        if desc.lower() in ["total", "sous-total", "somme", "montant"]:
-                            continue
-                            
-                        # Extraire le montant numérique
-                        amount_match = re.search(r'(\d+[,.]\d+|\d+)', amount_str.replace(' ', ''))
-                        if amount_match:
-                            amount_str = amount_match.group(1).replace(',', '.')
-                            try:
-                                amount = float(amount_str)
-                                charges.append({"poste": desc, "montant": amount})
-                            except ValueError:
-                                continue
-                
-                if charges:
-                    return charges
-        except Exception as e:
-            st.warning(f"Erreur lors de l'analyse du texte tabulaire: {str(e)}")
     
     # Traiter chaque tableau et extraire les charges
-    all_charges = []
-    
     for i, table_img in enumerate(tables):
         try:
             # Prétraiter l'image du tableau
@@ -600,5 +488,25 @@ def detect_and_extract_tables(charges_text, image_data=None):
             all_charges.extend(charges)
         except Exception as e:
             st.warning(f"Erreur lors du traitement du tableau {i+1}: {str(e)}")
+    
+    # Si aucun tableau n'a été trouvé, essayer l'extraction directe du texte
+    if not all_charges and charges_text:
+        text_charges = extract_charges_directly_from_text(charges_text)
+        all_charges.extend(text_charges)
+    
+    # Analyser le texte de la reddition de charges pour extraire les montants
+    if not all_charges and charges_text:
+        # Méthode de secours: rechercher des patterns spécifiques au format du document
+        pattern = r'(NETTOYAGE EXTERIEUR|DECHETS SECS|HYGIENE SANTE|ELECTRICITE ABORDS|STRUCTURE|VRD|ESPACES VERTS|MOYENS DE PROTECTION|SURVEILLANCE|GESTION ADMINISTRATION|HONORAIRES GESTION)\s+(\d[\d\s]*[\.,]\d+)'
+        matches = re.findall(pattern, charges_text)
+        
+        for match in matches:
+            desc = match[0].strip()
+            amount_str = match[1].replace(' ', '').replace(',', '.')
+            try:
+                amount = float(amount_str)
+                all_charges.append({"poste": desc, "montant": amount})
+            except ValueError:
+                continue
     
     return all_charges
